@@ -3,12 +3,13 @@
 interactive Christmas tree
 
 <!-- 2026-11-24 20:29（UTC+8）· 更新在线试玩链接 -->
+<!-- 2026-11-24 21:07（UTC+8）· 同步 V18 手机版试玩版本 -->
 
 **张手让星光散开，握拳收为星光圣诞树，食指拇指捏合拉出相框。**
 
 一棵可以亲手布置的 3D 粒子圣诞树。给它换一套挂饰配色、挂上自己的照片，再选一首适合今晚的圣诞曲。
 
-**[🎄 在线试玩 V17](https://lyoko-233.github.io/interactive-Christmas-tree/)**　·　[手势操作](#手势操作)　·　[控件设置](#控件设置)
+**[🎄 在线试玩 V18](https://lyoko-233.github.io/interactive-Christmas-tree/)**　·　[手势操作](#手势操作)　·　[控件设置](#控件设置)
 
 <p align="center">
   <a href="https://lyoko-233.github.io/interactive-Christmas-tree/">
@@ -91,6 +92,6 @@ interactive Christmas tree
 
 ## 版本与致谢
 
-- **在线试玩** [星光手势圣诞树 V17](https://lyoko-233.github.io/interactive-Christmas-tree/)
+- **在线试玩** [星光手势圣诞树 V18](https://lyoko-233.github.io/interactive-Christmas-tree/)
 
 感谢 [nobody-r](https://github.com/nobody-r) 公开原项目 [christmas-tree](https://github.com/nobody-r/christmas-tree)。此基础上优化粒子、挂饰、手势、相册和配乐。
