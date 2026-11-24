@@ -1,13 +1,13 @@
-# 璀璨圣诞树
+# 星光手势圣诞树
 
 **张手让星光散开，握拳把它们收成树，捏合就把最近的相框拉到眼前。**
 
 一棵可以亲手布置的 3D 粒子圣诞树。给它换一套挂饰配色、挂上自己的照片，再选一首适合今晚的圣诞曲。
 
-**[🎄 在线试玩 V17](https://lyoko-233.github.io/christmas-tree/tree/)**　·　[圣诞老人和麋鹿 V2](https://lyoko-233.github.io/christmas-tree/)　·　[手势操作](#手势操作)　·　[控件设置](#控件设置)
+**[🎄 在线试玩 V17](https://lyoko-233.github.io/starlit-gesture-tree/)**　·　[手势操作](#手势操作)　·　[控件设置](#控件设置)
 
 <p align="center">
-  <a href="https://lyoko-233.github.io/christmas-tree/tree/">
+  <a href="https://lyoko-233.github.io/starlit-gesture-tree/">
     <img src="docs/showcase/christmas-tree.webp" alt="金色粒子圣诞树全景，可见星形与霜晶、螺旋灯带、礼盒和彩球。" width="920">
   </a>
 </p>
@@ -89,7 +89,7 @@
 
 ## 版本与致谢
 
-- **2026-11-24 17:28（UTC+8） · 项目介绍 V1**。线上互动版为 V17，配套发布圣诞老人和麋鹿的 V2 同框示意。
-- **网址**：[互动圣诞树 V17](https://lyoko-233.github.io/christmas-tree/tree/) · [同框示意 V2](https://lyoko-233.github.io/christmas-tree/)
+- **2026-11-24 18:23（UTC+8） · 项目介绍 V2**。项目更名为「星光手势圣诞树」，网站首页直达 V17 互动场景。
+- **在线试玩** [星光手势圣诞树 V17](https://lyoko-233.github.io/starlit-gesture-tree/)
 
 感谢 [nobody-r](https://github.com/nobody-r) 公开原项目 [christmas-tree](https://github.com/nobody-r/christmas-tree)。我在此基础上继续优化粒子、挂饰、手势、相册和配乐。
