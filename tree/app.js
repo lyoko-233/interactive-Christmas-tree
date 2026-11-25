@@ -116,28 +116,63 @@ function createChristmasHandInput(gesture) {
   };
 }
 
-function findChristmasPinchTarget(hand,camera,frames,view,ray,point) {
-  const {width,height}=view;
-  if(hand.input!=="hand"){
-    ray.setFromCamera(point.set(hand.x*2-1,1-hand.y*2),camera);
-    let frame=ray.intersectObjects(frames,true)[0]?.object;
-    while(frame&&frame.name!=="photo_container") frame=frame.parent;
-    return frame??null;
+function findChristmasPointerFrame(hand,camera,frames) {
+  const ray=new Fy();
+  ray.setFromCamera(new Ge(hand.x*2-1,1-hand.y*2),camera);
+  let frame=ray.intersectObjects(frames,true)[0]?.object;
+  while(frame&&frame.name!=="photo_container") frame=frame.parent;
+  return frame??null;
+}
+
+function christmasPhotoViewChanged(previous,current) {
+  return !previous || previous.mode!==current.mode || previous.width!==current.width ||
+    previous.height!==current.height || Math.abs(previous.zoom-current.zoom)>.04 ||
+    previous.position.distanceToSquared(current.position)>.55**2 ||
+    previous.rotation.angleTo(current.rotation)>.08 ||
+    Math.cos(current.yaw-previous.yaw)<Math.cos(.10);
+}
+
+function selectChristmasPhoto(cycle,candidates,view) {
+  if(christmasPhotoViewChanged(cycle.view,view)) {
+    cycle.view=view;
+    cycle.seen.clear();
   }
-  let nearest=null,bestDistance=Infinity;
+  if(!candidates.length) return null;
+  const available=candidates.filter(candidate=>!cycle.seen.has(candidate.id));
+  if(!available.length) {
+    cycle.seen.clear();
+    available.push(...candidates);
+  }
+  // At a round or view boundary, prefer the next nearest photo over an immediate repeat.
+  const next=available.find(candidate=>candidate.id!==cycle.last)??available[0];
+  cycle.seen.add(next.id);
+  cycle.last=next.id;
+  return next.frame;
+}
+
+function findChristmasPhotoInView(cycle,group,frames,placements,camera,view) {
+  const viewProjection=new mD.Matrix4().multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse);
+  const frustum=new mD.Frustum().setFromProjectionMatrix(viewProjection);
+  const localBounds=new mD.Box3(new mD.Vector3(-.60,-.60,-.03),new mD.Vector3(.60,.60,.03));
+  const worldBounds=new mD.Box3();
+  const homeMatrix=new mD.Matrix4();
+  const orientation=new mD.Quaternion();
+  const scale=new mD.Vector3(1,1,1);
   const center=new mD.Vector3();
-  for(const frame of frames){
-    frame.getWorldPosition(center).project(camera);
-    if(Math.abs(center.x)>1||Math.abs(center.y)>1||Math.abs(center.z)>1) continue;
-    const dx=((center.x+1)/2-hand.x)*width;
-    const dy=((1-center.y)/2-hand.y)*height;
-    const distance=dx*dx+dy*dy;
-    if(distance<bestDistance){
-      nearest=frame;
-      bestDistance=distance;
-    }
+  const candidates=[];
+  for(const frame of frames) {
+    const home=placements[frame.userData.index];
+    if(!home) continue;
+    // Rank the resting frames, so a photo returning from its close-up cannot jump the queue.
+    orientation.setFromEuler(home.rotation);
+    homeMatrix.compose(home.initialPos,orientation,scale).premultiply(group.matrixWorld);
+    if(!frustum.intersectsBox(worldBounds.copy(localBounds).applyMatrix4(homeMatrix))) continue;
+    center.setFromMatrixPosition(homeMatrix).project(camera);
+    const distance=(center.x*view.width)**2+(center.y*view.height)**2;
+    candidates.push({id:home.url,frame,distance});
   }
-  return nearest;
+  candidates.sort((a,b)=>a.distance-b.distance||a.frame.userData.index-b.frame.userData.index);
+  return selectChristmasPhoto(cycle,candidates,view);
 }
 
 function routeChristmasPinch(route,hand,findTarget) {
@@ -152,15 +187,15 @@ function routeChristmasPinch(route,hand,findTarget) {
   return route.current;
 }
 
-function useChristmasHandOrbit(root,handData,displayMode) {
-  const motion=pe.useRef({anchor:null,manual:false});
+function useChristmasHandOrbit(root,handData,displayMode,motion) {
   const offset=pe.useMemo(()=>new mD.Vector3(),[]);
   const sphere=pe.useMemo(()=>new mD.Spherical(),[]);
   const filter=value=>Math.sign(value)*Math.max(0,Math.abs(value)-.012);
   vl(({camera,controls},dt)=>{
     const tree=root.current,state=motion.current;
     if(!tree) return;
-    const locked=handData.input==="hand"&&handData.isPresent&&handData.gesture===Zn.FIST;
+    const fist=handData.gesture===Zn.FIST;
+    const locked=handData.input==="hand"&&handData.isPresent&&(fist||handData.gesture===Zn.OPEN);
     if(!locked||!controls){
       state.anchor=null;
       const selectingPhoto=handData.input==="hand"&&handData.gesture===Zn.PINCH;
@@ -173,10 +208,13 @@ function useChristmasHandOrbit(root,handData,displayMode) {
       return;
     }
     const anchor=state.anchor;
-    const dx=filter(handData.gripX-anchor.x),upward=filter(anchor.y-handData.gripY);
+    const dx=filter(handData.gripX-anchor.x),upward=fist?filter(anchor.y-handData.gripY):0;
     if(dx||upward) state.manual=true;
     const ease=1-Math.exp(-16*dt);
-    tree.rotation.y=mD.MathUtils.lerp(tree.rotation.y,anchor.yaw+dx*7.5,ease);
+    const yaw=tree.rotation.y;
+    tree.rotation.y=mD.MathUtils.lerp(yaw,anchor.yaw+dx*7.5,ease);
+    state.viewYaw+=tree.rotation.y-yaw;
+    if(!fist) return;
     const pitch=mD.MathUtils.clamp(anchor.polar+upward*2.25,Math.min(anchor.polar,.65),controls.maxPolarAngle);
     if(Math.abs(pitch-sphere.phi)>.0001){
       sphere.phi=mD.MathUtils.lerp(sphere.phi,pitch,ease);
@@ -4870,13 +4908,16 @@ return orthographicDepthToViewZ(depth,cameraNear,cameraFar);
     });
     return re.jsx("group", { children });
   };
-})(),YP=({handData:r,photoRoute,images:t})=>{const{camera:i}=Wr(),s=pe.useRef(null),l=pe.useRef(new Map),f=pe.useMemo(()=>t.map((m,g)=>{const v=l.current.get(m);if(v)return{url:m,...v};const _=g/t.length*Math.PI*2,S=8,M={initialPos:new Q(Math.sin(_)*S,(Math.random()-.5)*8,Math.cos(_)*S),rotation:new Aa(0,_+Math.PI,0)};return l.current.set(m,M),{url:m,...M}}),[t]);return vl((m,g)=>{if(!s.current)return;const action=routeChristmasPinch(photoRoute,r,()=>{
+})(),YP=({handData:r,photoRoute,images:t,mode,orbit})=>{const{camera:i}=Wr(),s=pe.useRef(null),l=pe.useRef(new Map),cycle=pe.useRef({view:null,seen:new Set(),last:null}),f=pe.useMemo(()=>t.map((m,g)=>{const v=l.current.get(m);if(v)return{url:m,...v};const _=g/t.length*Math.PI*2,S=8,M={initialPos:new Q(Math.sin(_)*S,(Math.random()-.5)*8,Math.cos(_)*S),rotation:new Aa(0,_+Math.PI,0)};return l.current.set(m,M),{url:m,...M}}),[t]);return vl((m,g)=>{if(!s.current)return;const action=routeChristmasPinch(photoRoute,r,()=>{
       i.updateMatrixWorld();
       s.current.updateWorldMatrix(true,true);
       const frames=s.current.children.filter(item=>item.name==="photo_container");
-      return findChristmasPinchTarget(r,i,frames,{width:innerWidth,height:innerHeight},new Fy(),new Ge());
+      if(r.input!=="hand") return findChristmasPointerFrame(r,i,frames);
+      const view={mode,width:m.size.width,height:m.size.height,zoom:i.zoom,
+        position:i.position.clone(),rotation:i.quaternion.clone(),yaw:orbit.current.viewYaw};
+      return findChristmasPhotoInView(cycle.current,s.current,frames,f,i,view);
     });
-    s.current.children.forEach((E,R)=>{if(E.name!=="photo_container")return;const A=f[R];if(!A)return;const T=E===action?.frame,step=1-Math.exp(-g*5);let N=A.initialPos.clone(),I=A.rotation.clone(),D=1;if(T&&s.current){const z=new Q(0,0,-5);z.applyQuaternion(i.quaternion);const F=i.position.clone().add(z);N=s.current.worldToLocal(F.clone());const P=new Bn,O=s.current.localToWorld(N.clone());P.position.copy(O),P.lookAt(i.position);const X=new Ta;s.current.getWorldQuaternion(X);const te=X.clone().invert().multiply(P.quaternion);I=new Aa().setFromQuaternion(te),D=2.5}else N.y+=Math.sin(m.clock.elapsedTime+R)*.01;E.position.lerp(N,step),Math.abs(E.rotation.y-I.y)>Math.PI&&(I.y>E.rotation.y?E.rotation.y+=Math.PI*2:E.rotation.y-=Math.PI*2),E.rotation.x=K0.lerp(E.rotation.x,I.x,step),E.rotation.y=K0.lerp(E.rotation.y,I.y,step),E.rotation.z=K0.lerp(E.rotation.z,I.z,step);const B=E.scale.x,L=K0.lerp(B,D,step);E.scale.set(L,L,L)})},-.5),re.jsx("group",{ref:s,children:f.map((m,g)=>re.jsxs("group",{name:"photo_container",position:m.initialPos,rotation:m.rotation,userData:{index:g},children:[re.jsx(AL,{url:m.url,transparent:!0,opacity:.9,side:ua}),re.jsxs("group",{children:[re.jsxs("mesh",{position:[0,.55,0],children:[re.jsx("boxGeometry",{args:[1.2,.1,.05]}),re.jsx("meshStandardMaterial",{color:"#FFD700",metalness:1,roughness:.2,envMapIntensity:2})]}),re.jsxs("mesh",{position:[0,-.55,0],children:[re.jsx("boxGeometry",{args:[1.2,.1,.05]}),re.jsx("meshStandardMaterial",{color:"#FFD700",metalness:1,roughness:.2,envMapIntensity:2})]}),re.jsxs("mesh",{position:[-.55,0,0],children:[re.jsx("boxGeometry",{args:[.1,1,.05]}),re.jsx("meshStandardMaterial",{color:"#FFD700",metalness:1,roughness:.2,envMapIntensity:2})]}),re.jsxs("mesh",{position:[.55,0,0],children:[re.jsx("boxGeometry",{args:[.1,1,.05]}),re.jsx("meshStandardMaterial",{color:"#FFD700",metalness:1,roughness:.2,envMapIntensity:2})]})]})]},m.url))})},v5Details=(function treeDetailComponents(T, React, jsx, useFrame, mode, gestures, treeHeight, treeRadius) {
+    s.current.children.forEach((E,R)=>{if(E.name!=="photo_container")return;const A=f[R];if(!A)return;const T=E===action?.frame,step=1-Math.exp(-g*5);let N=A.initialPos.clone(),I=A.rotation.clone(),D=1;if(T&&s.current){const z=new Q(0,0,-5);z.applyQuaternion(i.quaternion);const F=i.position.clone().add(z).project(i);F.set(0,0,F.z).unproject(i);N=s.current.worldToLocal(F.clone());const P=new Bn,O=s.current.localToWorld(N.clone());P.position.copy(O),P.lookAt(i.position);const X=new Ta;s.current.getWorldQuaternion(X);const te=X.clone().invert().multiply(P.quaternion);I=new Aa().setFromQuaternion(te),D=2.5}else N.y+=Math.sin(m.clock.elapsedTime+R)*.01;E.position.lerp(N,step),Math.abs(E.rotation.y-I.y)>Math.PI&&(I.y>E.rotation.y?E.rotation.y+=Math.PI*2:E.rotation.y-=Math.PI*2),E.rotation.x=K0.lerp(E.rotation.x,I.x,step),E.rotation.y=K0.lerp(E.rotation.y,I.y,step),E.rotation.z=K0.lerp(E.rotation.z,I.z,step);const B=E.scale.x,L=K0.lerp(B,D,step);E.scale.set(L,L,L)})},-.5),re.jsx("group",{ref:s,children:f.map((m,g)=>re.jsxs("group",{name:"photo_container",position:m.initialPos,rotation:m.rotation,userData:{index:g},children:[re.jsx(AL,{url:m.url,transparent:!0,opacity:.9,side:ua}),re.jsxs("group",{children:[re.jsxs("mesh",{position:[0,.55,0],children:[re.jsx("boxGeometry",{args:[1.2,.1,.05]}),re.jsx("meshStandardMaterial",{color:"#FFD700",metalness:1,roughness:.2,envMapIntensity:2})]}),re.jsxs("mesh",{position:[0,-.55,0],children:[re.jsx("boxGeometry",{args:[1.2,.1,.05]}),re.jsx("meshStandardMaterial",{color:"#FFD700",metalness:1,roughness:.2,envMapIntensity:2})]}),re.jsxs("mesh",{position:[-.55,0,0],children:[re.jsx("boxGeometry",{args:[.1,1,.05]}),re.jsx("meshStandardMaterial",{color:"#FFD700",metalness:1,roughness:.2,envMapIntensity:2})]}),re.jsxs("mesh",{position:[.55,0,0],children:[re.jsx("boxGeometry",{args:[.1,1,.05]}),re.jsx("meshStandardMaterial",{color:"#FFD700",metalness:1,roughness:.2,envMapIntensity:2})]})]})]},m.url))})},v5Details=(function treeDetailComponents(T, React, jsx, useFrame, mode, gestures, treeHeight, treeRadius) {
   const TAU = Math.PI * 2;
   const v = (x,y,z) => new T.Vector3(x,y,z);
   const standard = parameters => new T.MeshStandardMaterial(parameters);
@@ -5749,7 +5790,7 @@ return orthographicDepthToViewZ(depth,cameraNear,cameraFar);
       const camera=state.camera;
       const pointer=model.object;
       const {point,depth}=vectors;
-      const visible=handData.isPresent;
+      const visible=handData.isPresent&&handData.input!=="hand";
       const pinch=handData.gesture===gestures.PINCH;
       pointer.visible=visible;
       if(!visible) {lastPinch.current=false;return;}
@@ -5784,7 +5825,7 @@ return orthographicDepthToViewZ(depth,cameraNear,cameraFar);
     return new mD.CanvasTexture(canvas);
   },[]);
   pe.useEffect(()=>()=>snowMap.dispose(),[snowMap]);
-  const t=26,i=16,s=-8.5,{positions:l,flakes:f}=pe.useMemo(()=>{const h=new Float32Array(r*3),m=[];for(let g=0;g<r;g++){const v=Math.sqrt(Math.random())*t,_=Math.random()*Math.PI*2;h[g*3]=Math.cos(_)*v,h[g*3+1]=s+Math.random()*(i-s),h[g*3+2]=Math.sin(_)*v,m.push({speed:.6+Math.random()*1.2,driftPhase:Math.random()*Math.PI*2,driftAmp:.15+Math.random()*.5})}return{positions:h,flakes:m}},[r]);return vl((h,m)=>{if(!e.current)return;const g=e.current.geometry.attributes.position,v=g.array,_=h.clock.getElapsedTime();for(let S=0;S<r;S++){const M=S*3;if(v[M+1]-=f[S].speed*m,v[M]+=Math.sin(_*.8+f[S].driftPhase)*f[S].driftAmp*m,v[M+2]+=Math.cos(_*.6+f[S].driftPhase)*f[S].driftAmp*m,v[M+1]<s){const E=Math.sqrt(Math.random())*t,R=Math.random()*Math.PI*2;v[M]=Math.cos(R)*E,v[M+1]=i,v[M+2]=Math.sin(R)*E}}g.needsUpdate=!0}),re.jsxs("points",{ref:e,children:[re.jsx("bufferGeometry",{children:re.jsx("bufferAttribute",{attach:"attributes-position",args:[l,3]})}),re.jsx("pointsMaterial",{size:.14,color:"#ffffff",map:snowMap,alphaTest:.015,transparent:!0,opacity:.85,sizeAttenuation:!0,depthWrite:!1,blending:ip})]})},KP=v5Details.Foundation,JP=v5Details.Garland,$P=({mode:r,audioData:e,handData:t,photoRoute,config:s,images:l})=>{const f=pe.useRef(null);useChristmasHandOrbit(f,t,r);return re.jsxs("group",{ref:f,children:[re.jsx(jP,{mode:r,audioData:e,handData:t,count:s.particleCount,color1:s.particleColor1,color2:s.particleColor2}),re.jsx(ZP,{mode:r,audioData:e,handData:t,boxCount:s.boxCount,bellCount:s.bellCount,boxColor1:s.boxColor1,boxColor2:s.boxColor2,bellColor:s.bellColor}),re.jsx(JP,{audioData:e}),re.jsx(YP,{handData:t,photoRoute,images:l})]})};
+  const t=26,i=16,s=-8.5,{positions:l,flakes:f}=pe.useMemo(()=>{const h=new Float32Array(r*3),m=[];for(let g=0;g<r;g++){const v=Math.sqrt(Math.random())*t,_=Math.random()*Math.PI*2;h[g*3]=Math.cos(_)*v,h[g*3+1]=s+Math.random()*(i-s),h[g*3+2]=Math.sin(_)*v,m.push({speed:.6+Math.random()*1.2,driftPhase:Math.random()*Math.PI*2,driftAmp:.15+Math.random()*.5})}return{positions:h,flakes:m}},[r]);return vl((h,m)=>{if(!e.current)return;const g=e.current.geometry.attributes.position,v=g.array,_=h.clock.getElapsedTime();for(let S=0;S<r;S++){const M=S*3;if(v[M+1]-=f[S].speed*m,v[M]+=Math.sin(_*.8+f[S].driftPhase)*f[S].driftAmp*m,v[M+2]+=Math.cos(_*.6+f[S].driftPhase)*f[S].driftAmp*m,v[M+1]<s){const E=Math.sqrt(Math.random())*t,R=Math.random()*Math.PI*2;v[M]=Math.cos(R)*E,v[M+1]=i,v[M+2]=Math.sin(R)*E}}g.needsUpdate=!0}),re.jsxs("points",{ref:e,children:[re.jsx("bufferGeometry",{children:re.jsx("bufferAttribute",{attach:"attributes-position",args:[l,3]})}),re.jsx("pointsMaterial",{size:.14,color:"#ffffff",map:snowMap,alphaTest:.015,transparent:!0,opacity:.85,sizeAttenuation:!0,depthWrite:!1,blending:ip})]})},KP=v5Details.Foundation,JP=v5Details.Garland,$P=({mode:r,audioData:e,handData:t,photoRoute,config:s,images:l})=>{const f=pe.useRef(null),orbit=pe.useRef({anchor:null,manual:false,viewYaw:0});useChristmasHandOrbit(f,t,r,orbit);return re.jsxs("group",{ref:f,children:[re.jsx(jP,{mode:r,audioData:e,handData:t,count:s.particleCount,color1:s.particleColor1,color2:s.particleColor2}),re.jsx(ZP,{mode:r,audioData:e,handData:t,boxCount:s.boxCount,bellCount:s.bellCount,boxColor1:s.boxColor1,boxColor2:s.boxColor2,bellColor:s.bellColor}),re.jsx(JP,{audioData:e}),re.jsx(YP,{handData:t,photoRoute,images:l,mode:r,orbit})]})};
 function ChristmasViewportFraming(){
   const camera=Wr(state=>state.camera);
   const size=Wr(state=>state.size);
@@ -5939,13 +5980,13 @@ const ez=({mode:r,audioData:e,handData:t,config:i,images:s})=>{const photoRoute=
   ]}),
   M&&cameraReady&&re.jsxs("div",{className:"christmas-gesture-status",role:"status",children:[re.jsx(hz,{size:13}),
     t===Zn.FIST?"握拳 · 收拢":t===Zn.PINCH?"拇指与食指捏合":t===Zn.OPEN?"张掌 · 星光漂浮":l.isPresent?"等待手势":"等待手进入画面"]})
-]})]}),R&&re.jsxs("div",{className:"christmas-settings-panel absolute right-6 w-80 rounded-2xl p-5 pointer-events-auto backdrop-blur-xl transition-all animate-in fade-in slide-in-from-right-10 overflow-y-auto max-h-[70vh] custom-scrollbar",style:{background:"rgba(10,14,30,0.9)",border:"1px solid rgba(255,217,138,0.3)",boxShadow:"0 12px 40px rgba(0,0,0,0.6)"},children:[re.jsxs("div",{className:"flex justify-between items-center mb-4",children:[re.jsx("h3",{className:"font-display italic text-base font-semibold",style:{color:z},children:"圣诞布置"}),re.jsx("button",{onClick:()=>A(!1),style:{color:"rgba(255,255,255,0.4)"},className:"hover:text-white transition-colors",children:re.jsx(Dz,{size:16})})]}),re.jsxs("div",{className:"space-y-6",children:[re.jsxs("div",{className:"space-y-3",children:[re.jsx("div",{className:"text-xs tracking-widest font-semibold pb-1 border-b",style:{color:"rgba(255,255,255,0.5)",borderColor:"rgba(255,255,255,0.08)"},children:"本地配乐"}),re.jsxs("div",{className:"rounded-xl p-2.5 border",style:{background:"rgba(255,255,255,0.04)",borderColor:"rgba(255,255,255,0.08)"},children:[re.jsxs("div",{className:"flex items-center gap-2 mb-2",children:[re.jsx(Nz,{size:12,style:{color:z}}),re.jsx("div",{className:"text-[10px] truncate max-w-[200px]",style:{color:"rgba(255,217,138,0.8)"},children:_||"未知曲目"})]}),re.jsx("input",{type:"file",ref:D,onChange:S,className:"hidden",accept:"audio/*"}),re.jsxs("button",{onClick:()=>{var F;return(F=D.current)==null?void 0:F.click()},className:"w-full text-[10px] py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1",style:{background:"rgba(255,255,255,0.06)",color:"rgba(255,255,255,0.6)"},children:[re.jsx(Cz,{size:10})," 上传本地音乐"]})]})]}),re.jsxs("div",{className:"space-y-3",children:[re.jsx("div",{className:"text-xs tracking-widest font-semibold pb-1 border-b",style:{color:"rgba(255,255,255,0.5)",borderColor:"rgba(255,255,255,0.08)"},children:"星光粒子"}),re.jsxs("div",{className:"space-y-2",children:[re.jsx("label",{className:"flex justify-between text-xs",style:{color:"rgba(255,255,255,0.7)"},children:re.jsxs("span",{children:["数量：",f.particleCount]})}),re.jsx("input",{type:"range",min:"1000",max:"10000",step:"500",value:f.particleCount,onChange:F=>L("particleCount",parseInt(F.target.value)),className:"w-full h-1 rounded-lg appearance-none cursor-pointer",style:{accentColor:z,background:"rgba(255,255,255,0.1)"}})]}),re.jsxs("div",{className:"flex gap-2",children:[re.jsxs("div",{className:"flex-1",children:[re.jsx("label",{className:"block text-[10px] mb-1",style:{color:"rgba(255,255,255,0.4)"},children:"主色"}),re.jsx("input",{type:"color",value:f.particleColor1,onChange:F=>L("particleColor1",F.target.value),className:"w-full h-8 rounded-lg border cursor-pointer bg-transparent",style:{borderColor:"rgba(255,255,255,0.15)"}})]}),re.jsxs("div",{className:"flex-1",children:[re.jsx("label",{className:"block text-[10px] mb-1",style:{color:"rgba(255,255,255,0.4)"},children:"点缀色"}),re.jsx("input",{type:"color",value:f.particleColor2,onChange:F=>L("particleColor2",F.target.value),className:"w-full h-8 rounded-lg border cursor-pointer bg-transparent",style:{borderColor:"rgba(255,255,255,0.15)"}})]})]})]}),re.jsxs("div",{className:"space-y-3",children:[re.jsx("div",{className:"text-xs tracking-widest font-semibold pb-1 border-b",style:{color:"rgba(255,255,255,0.5)",borderColor:"rgba(255,255,255,0.08)"},children:"礼物盒与彩球"}),re.jsxs("div",{className:"space-y-2",children:[re.jsx("label",{className:"flex justify-between text-xs",style:{color:"rgba(255,255,255,0.7)"},children:re.jsxs("span",{children:["礼盒 ",v5Details.ornamentCounts(f.boxCount,f.bellCount).boxes," · 拐杖 ",v5Details.ornamentCounts(f.boxCount,f.bellCount).canes]})}),re.jsx("input",{type:"range",min:"0",max:"600",step:"10","aria-label":"礼盒与拐杖总数",value:f.boxCount,onChange:F=>L("boxCount",parseInt(F.target.value)),className:"w-full h-1 rounded-lg appearance-none cursor-pointer",style:{accentColor:"#ff5964",background:"rgba(255,255,255,0.1)"}})]}),re.jsxs("div",{className:"space-y-2",children:[re.jsx("label",{className:"flex justify-between text-xs",style:{color:"rgba(255,255,255,0.7)"},children:re.jsxs("span",{children:["彩球：",f.bellCount]})}),re.jsx("input",{type:"range",min:"0",max:"600",step:"10",value:f.bellCount,onChange:F=>L("bellCount",parseInt(F.target.value)),className:"w-full h-1 rounded-lg appearance-none cursor-pointer",style:{accentColor:"#f2c14e",background:"rgba(255,255,255,0.1)"}})]}),re.jsxs("div",{className:"flex gap-2",children:[re.jsxs("div",{className:"flex-1",children:[re.jsx("label",{className:"block text-[10px] mb-1",style:{color:"rgba(255,255,255,0.4)"},children:"礼盒 A"}),re.jsx("input",{type:"color",value:f.boxColor1,onChange:F=>L("boxColor1",F.target.value),className:"w-full h-8 rounded-lg border cursor-pointer bg-transparent",style:{borderColor:"rgba(255,255,255,0.15)"}})]}),re.jsxs("div",{className:"flex-1",children:[re.jsx("label",{className:"block text-[10px] mb-1",style:{color:"rgba(255,255,255,0.4)"},children:"礼盒 B"}),re.jsx("input",{type:"color",value:f.boxColor2,onChange:F=>L("boxColor2",F.target.value),className:"w-full h-8 rounded-lg border cursor-pointer bg-transparent",style:{borderColor:"rgba(255,255,255,0.15)"}})]}),re.jsxs("div",{className:"flex-1",children:[re.jsx("label",{className:"block text-[10px] mb-1",style:{color:"rgba(255,255,255,0.4)"},children:"彩球"}),re.jsx("input",{type:"color",value:f.bellColor,onChange:F=>L("bellColor",F.target.value),className:"w-full h-8 rounded-lg border cursor-pointer bg-transparent",style:{borderColor:"rgba(255,255,255,0.15)"}})]})]})]})]})]}),l.isPresent&&re.jsx("div",{className:"absolute pointer-events-none transition-all duration-75 ease-out",style:{left:`${l.x*100}%`,top:`${l.y*100}%`,transform:"translate(-50%, -50%)"},children:re.jsxs("div",{className:`
+]})]}),R&&re.jsxs("div",{className:"christmas-settings-panel absolute right-6 w-80 rounded-2xl p-5 pointer-events-auto backdrop-blur-xl transition-all animate-in fade-in slide-in-from-right-10 overflow-y-auto max-h-[70vh] custom-scrollbar",style:{background:"rgba(10,14,30,0.9)",border:"1px solid rgba(255,217,138,0.3)",boxShadow:"0 12px 40px rgba(0,0,0,0.6)"},children:[re.jsxs("div",{className:"flex justify-between items-center mb-4",children:[re.jsx("h3",{className:"font-display italic text-base font-semibold",style:{color:z},children:"圣诞布置"}),re.jsx("button",{onClick:()=>A(!1),style:{color:"rgba(255,255,255,0.4)"},className:"hover:text-white transition-colors",children:re.jsx(Dz,{size:16})})]}),re.jsxs("div",{className:"space-y-6",children:[re.jsxs("div",{className:"space-y-3",children:[re.jsx("div",{className:"text-xs tracking-widest font-semibold pb-1 border-b",style:{color:"rgba(255,255,255,0.5)",borderColor:"rgba(255,255,255,0.08)"},children:"本地配乐"}),re.jsxs("div",{className:"rounded-xl p-2.5 border",style:{background:"rgba(255,255,255,0.04)",borderColor:"rgba(255,255,255,0.08)"},children:[re.jsxs("div",{className:"flex items-center gap-2 mb-2",children:[re.jsx(Nz,{size:12,style:{color:z}}),re.jsx("div",{className:"text-[10px] truncate max-w-[200px]",style:{color:"rgba(255,217,138,0.8)"},children:_||"未知曲目"})]}),re.jsx("input",{type:"file",ref:D,onChange:S,className:"hidden",accept:"audio/*"}),re.jsxs("button",{onClick:()=>{var F;return(F=D.current)==null?void 0:F.click()},className:"w-full text-[10px] py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1",style:{background:"rgba(255,255,255,0.06)",color:"rgba(255,255,255,0.6)"},children:[re.jsx(Cz,{size:10})," 上传本地音乐"]})]})]}),re.jsxs("div",{className:"space-y-3",children:[re.jsx("div",{className:"text-xs tracking-widest font-semibold pb-1 border-b",style:{color:"rgba(255,255,255,0.5)",borderColor:"rgba(255,255,255,0.08)"},children:"星光粒子"}),re.jsxs("div",{className:"space-y-2",children:[re.jsx("label",{className:"flex justify-between text-xs",style:{color:"rgba(255,255,255,0.7)"},children:re.jsxs("span",{children:["数量：",f.particleCount]})}),re.jsx("input",{type:"range",min:"1000",max:"10000",step:"500",value:f.particleCount,onChange:F=>L("particleCount",parseInt(F.target.value)),className:"w-full h-1 rounded-lg appearance-none cursor-pointer",style:{accentColor:z,background:"rgba(255,255,255,0.1)"}})]}),re.jsxs("div",{className:"flex gap-2",children:[re.jsxs("div",{className:"flex-1",children:[re.jsx("label",{className:"block text-[10px] mb-1",style:{color:"rgba(255,255,255,0.4)"},children:"主色"}),re.jsx("input",{type:"color",value:f.particleColor1,onChange:F=>L("particleColor1",F.target.value),className:"w-full h-8 rounded-lg border cursor-pointer bg-transparent",style:{borderColor:"rgba(255,255,255,0.15)"}})]}),re.jsxs("div",{className:"flex-1",children:[re.jsx("label",{className:"block text-[10px] mb-1",style:{color:"rgba(255,255,255,0.4)"},children:"点缀色"}),re.jsx("input",{type:"color",value:f.particleColor2,onChange:F=>L("particleColor2",F.target.value),className:"w-full h-8 rounded-lg border cursor-pointer bg-transparent",style:{borderColor:"rgba(255,255,255,0.15)"}})]})]})]}),re.jsxs("div",{className:"space-y-3",children:[re.jsx("div",{className:"text-xs tracking-widest font-semibold pb-1 border-b",style:{color:"rgba(255,255,255,0.5)",borderColor:"rgba(255,255,255,0.08)"},children:"礼物盒与彩球"}),re.jsxs("div",{className:"space-y-2",children:[re.jsx("label",{className:"flex justify-between text-xs",style:{color:"rgba(255,255,255,0.7)"},children:re.jsxs("span",{children:["礼盒 ",v5Details.ornamentCounts(f.boxCount,f.bellCount).boxes," · 拐杖 ",v5Details.ornamentCounts(f.boxCount,f.bellCount).canes]})}),re.jsx("input",{type:"range",min:"0",max:"600",step:"10","aria-label":"礼盒与拐杖总数",value:f.boxCount,onChange:F=>L("boxCount",parseInt(F.target.value)),className:"w-full h-1 rounded-lg appearance-none cursor-pointer",style:{accentColor:"#ff5964",background:"rgba(255,255,255,0.1)"}})]}),re.jsxs("div",{className:"space-y-2",children:[re.jsx("label",{className:"flex justify-between text-xs",style:{color:"rgba(255,255,255,0.7)"},children:re.jsxs("span",{children:["彩球：",f.bellCount]})}),re.jsx("input",{type:"range",min:"0",max:"600",step:"10",value:f.bellCount,onChange:F=>L("bellCount",parseInt(F.target.value)),className:"w-full h-1 rounded-lg appearance-none cursor-pointer",style:{accentColor:"#f2c14e",background:"rgba(255,255,255,0.1)"}})]}),re.jsxs("div",{className:"flex gap-2",children:[re.jsxs("div",{className:"flex-1",children:[re.jsx("label",{className:"block text-[10px] mb-1",style:{color:"rgba(255,255,255,0.4)"},children:"礼盒 A"}),re.jsx("input",{type:"color",value:f.boxColor1,onChange:F=>L("boxColor1",F.target.value),className:"w-full h-8 rounded-lg border cursor-pointer bg-transparent",style:{borderColor:"rgba(255,255,255,0.15)"}})]}),re.jsxs("div",{className:"flex-1",children:[re.jsx("label",{className:"block text-[10px] mb-1",style:{color:"rgba(255,255,255,0.4)"},children:"礼盒 B"}),re.jsx("input",{type:"color",value:f.boxColor2,onChange:F=>L("boxColor2",F.target.value),className:"w-full h-8 rounded-lg border cursor-pointer bg-transparent",style:{borderColor:"rgba(255,255,255,0.15)"}})]}),re.jsxs("div",{className:"flex-1",children:[re.jsx("label",{className:"block text-[10px] mb-1",style:{color:"rgba(255,255,255,0.4)"},children:"彩球"}),re.jsx("input",{type:"color",value:f.bellColor,onChange:F=>L("bellColor",F.target.value),className:"w-full h-8 rounded-lg border cursor-pointer bg-transparent",style:{borderColor:"rgba(255,255,255,0.15)"}})]})]})]})]})]}),l.isPresent&&l.input!=="hand"&&re.jsx("div",{className:"absolute pointer-events-none transition-all duration-75 ease-out",style:{left:`${l.x*100}%`,top:`${l.y*100}%`,transform:"translate(-50%, -50%)"},children:re.jsxs("div",{className:`
                 relative flex items-center justify-center
                 ${mouseBloom?"w-12 h-12":"w-8 h-8"}
                 transition-all duration-200
             `,children:[re.jsx("div",{className:`absolute inset-0 border-2 rounded-full opacity-70
                     ${mouseBloom?"scale-110":""}
-                `,style:{borderColor:mouseBloom?"#ff5964":z}}),re.jsx("div",{className:"w-1 h-1 bg-white rounded-full"}),mouseBloom&&re.jsx("div",{className:"absolute -top-6 text-[10px] font-bold tracking-widest animate-pulse",style:{color:"#ff5964"},children:"绽放"})]})}),re.jsx("div",{className:"christmas-input-hint flex items-end justify-center pointer-events-none w-full",children:re.jsx("div",{className:"px-5 py-2 rounded-full backdrop-blur-md text-[11px] tracking-[0.25em] border",style:{background:"rgba(10,14,30,0.5)",borderColor:"rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.45)"},children:M?"张掌漂浮 · 握拳收拢，移动可旋转 · 捏合查看最近相框":"拖动旋转 · 滚轮缩放 · 按住鼠标让星光绽放"})})]})};
+                `,style:{borderColor:mouseBloom?"#ff5964":z}}),re.jsx("div",{className:"w-1 h-1 bg-white rounded-full"}),mouseBloom&&re.jsx("div",{className:"absolute -top-6 text-[10px] font-bold tracking-widest animate-pulse",style:{color:"#ff5964"},children:"绽放"})]})}),re.jsx("div",{className:"christmas-input-hint flex items-end justify-center pointer-events-none w-full",children:re.jsx("div",{className:"px-5 py-2 rounded-full backdrop-blur-md text-[11px] tracking-[0.25em] border",style:{background:"rgba(10,14,30,0.5)",borderColor:"rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.45)"},children:M?"张掌漂浮，左右转动 · 握拳收拢，移动可旋转 · 捏合轮换相框":"拖动旋转 · 滚轮缩放 · 按住鼠标让星光绽放"})})]})};
 const christmasMobile = matchMedia("(max-width: 767px), (max-width: 960px) and (pointer: coarse)").matches;
 const christmasReduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
 const christmasHandScripts = [
