@@ -8,12 +8,13 @@ interactive Christmas tree
 <!-- 2026-11-25 14:52（UTC+8）· 更新 V20 张掌旋转与捏合轮换说明 -->
 <!-- 2026-11-25 15:28（UTC+8）· 补充 V20 手势触发与相框轮换规则 -->
 <!-- 2026-11-27 14:16（UTC+8）· 更新 V21 手势初始化与重试说明 -->
+<!-- 2026-11-27 14:26（UTC+8）· 更新 V22 手势引擎预热与资源精简说明 -->
 
 **张手让星光散开，握拳收为星光圣诞树，食指拇指捏合拉出相框。**
 
 一棵可以亲手布置的 3D 粒子圣诞树。给它换一套挂饰配色、挂上自己的照片，再选一首适合今晚的圣诞曲。
 
-**[🎄 在线试玩 V21](https://lyoko-233.github.io/interactive-Christmas-tree/)**　·　[手势操作](#手势操作)　·　[控件设置](#控件设置)
+**[🎄 在线试玩 V22](https://lyoko-233.github.io/interactive-Christmas-tree/)**　·　[手势操作](#手势操作)　·　[控件设置](#控件设置)
 
 <p align="center">
   <a href="https://lyoko-233.github.io/interactive-Christmas-tree/">
@@ -99,7 +100,8 @@ interactive Christmas tree
 
 ## 版本与致谢
 
+- **V22 手势加速**。精简了手势引擎的下载资源。桌面端可在页面空闲时预热引擎，再次开启摄像头时可复用已初始化的引擎。
 - **V21 手势启动**。使用轻量手势模型，分别显示下载、初始化和首帧识别状态。资源成功下载后可在同一页面复用，启动失败时可直接重试。
-- **在线试玩** [星光手势圣诞树 V21](https://lyoko-233.github.io/interactive-Christmas-tree/)
+- **在线试玩** [星光手势圣诞树 V22](https://lyoko-233.github.io/interactive-Christmas-tree/)
 
 感谢 [nobody-r](https://github.com/nobody-r) 公开原项目 [christmas-tree](https://github.com/nobody-r/christmas-tree)。此基础上优化粒子、挂饰、手势、相册和配乐。
