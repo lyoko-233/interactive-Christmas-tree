@@ -124,33 +124,21 @@ function findChristmasPointerFrame(hand,camera,frames) {
   return frame??null;
 }
 
-function christmasPhotoViewChanged(previous,current) {
-  return !previous || previous.mode!==current.mode || previous.width!==current.width ||
-    previous.height!==current.height || Math.abs(previous.zoom-current.zoom)>.04 ||
-    previous.position.distanceToSquared(current.position)>.55**2 ||
-    previous.rotation.angleTo(current.rotation)>.08 ||
-    Math.cos(current.yaw-previous.yaw)<Math.cos(.10);
-}
-
-function selectChristmasPhoto(cycle,candidates,view) {
-  if(christmasPhotoViewChanged(cycle.view,view)) {
-    cycle.view=view;
-    cycle.seen.clear();
-  }
+function selectChristmasPhoto(cycle,candidates) {
   if(!candidates.length) return null;
   const available=candidates.filter(candidate=>!cycle.seen.has(candidate.id));
   if(!available.length) {
     cycle.seen.clear();
     available.push(...candidates);
   }
-  // At a round or view boundary, prefer the next nearest photo over an immediate repeat.
+  // When a new round starts, avoid immediately repeating the last photo if possible.
   const next=available.find(candidate=>candidate.id!==cycle.last)??available[0];
   cycle.seen.add(next.id);
   cycle.last=next.id;
   return next.frame;
 }
 
-function findChristmasPhotoInView(cycle,group,frames,placements,camera,view) {
+function findNextChristmasPhoto(cycle,group,frames,placements,camera,view) {
   const viewProjection=new mD.Matrix4().multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse);
   const frustum=new mD.Frustum().setFromProjectionMatrix(viewProjection);
   const localBounds=new mD.Box3(new mD.Vector3(-.60,-.60,-.03),new mD.Vector3(.60,.60,.03));
@@ -166,13 +154,16 @@ function findChristmasPhotoInView(cycle,group,frames,placements,camera,view) {
     // Rank the resting frames, so a photo returning from its close-up cannot jump the queue.
     orientation.setFromEuler(home.rotation);
     homeMatrix.compose(home.initialPos,orientation,scale).premultiply(group.matrixWorld);
-    if(!frustum.intersectsBox(worldBounds.copy(localBounds).applyMatrix4(homeMatrix))) continue;
-    center.setFromMatrixPosition(homeMatrix).project(camera);
-    const distance=(center.x*view.width)**2+(center.y*view.height)**2;
+    // Keep off-screen photos in the round, after the photos already in view.
+    let distance=Infinity;
+    if(frustum.intersectsBox(worldBounds.copy(localBounds).applyMatrix4(homeMatrix))) {
+      center.setFromMatrixPosition(homeMatrix).project(camera);
+      distance=(center.x*view.width)**2+(center.y*view.height)**2;
+    }
     candidates.push({id:home.url,frame,distance});
   }
   candidates.sort((a,b)=>a.distance-b.distance||a.frame.userData.index-b.frame.userData.index);
-  return selectChristmasPhoto(cycle,candidates,view);
+  return selectChristmasPhoto(cycle,candidates);
 }
 
 function routeChristmasPinch(route,hand,findTarget) {
@@ -187,7 +178,8 @@ function routeChristmasPinch(route,hand,findTarget) {
   return route.current;
 }
 
-function useChristmasHandOrbit(root,handData,displayMode,motion) {
+function useChristmasHandOrbit(root,handData,displayMode) {
+  const motion=pe.useRef({anchor:null,manual:false});
   const offset=pe.useMemo(()=>new mD.Vector3(),[]);
   const sphere=pe.useMemo(()=>new mD.Spherical(),[]);
   const filter=value=>Math.sign(value)*Math.max(0,Math.abs(value)-.012);
@@ -211,9 +203,7 @@ function useChristmasHandOrbit(root,handData,displayMode,motion) {
     const dx=filter(handData.gripX-anchor.x),upward=fist?filter(anchor.y-handData.gripY):0;
     if(dx||upward) state.manual=true;
     const ease=1-Math.exp(-16*dt);
-    const yaw=tree.rotation.y;
-    tree.rotation.y=mD.MathUtils.lerp(yaw,anchor.yaw+dx*7.5,ease);
-    state.viewYaw+=tree.rotation.y-yaw;
+    tree.rotation.y=mD.MathUtils.lerp(tree.rotation.y,anchor.yaw+dx*7.5,ease);
     if(!fist) return;
     const pitch=mD.MathUtils.clamp(anchor.polar+upward*2.25,Math.min(anchor.polar,.65),controls.maxPolarAngle);
     if(Math.abs(pitch-sphere.phi)>.0001){
@@ -4908,14 +4898,12 @@ return orthographicDepthToViewZ(depth,cameraNear,cameraFar);
     });
     return re.jsx("group", { children });
   };
-})(),YP=({handData:r,photoRoute,images:t,mode,orbit})=>{const{camera:i}=Wr(),s=pe.useRef(null),l=pe.useRef(new Map),cycle=pe.useRef({view:null,seen:new Set(),last:null}),f=pe.useMemo(()=>t.map((m,g)=>{const v=l.current.get(m);if(v)return{url:m,...v};const _=g/t.length*Math.PI*2,S=8,M={initialPos:new Q(Math.sin(_)*S,(Math.random()-.5)*8,Math.cos(_)*S),rotation:new Aa(0,_+Math.PI,0)};return l.current.set(m,M),{url:m,...M}}),[t]);return vl((m,g)=>{if(!s.current)return;const action=routeChristmasPinch(photoRoute,r,()=>{
+})(),YP=({handData:r,photoRoute,images:t})=>{const{camera:i}=Wr(),s=pe.useRef(null),l=pe.useRef(new Map),cycle=pe.useRef({seen:new Set(),last:null}),f=pe.useMemo(()=>t.map((m,g)=>{const v=l.current.get(m);if(v)return{url:m,...v};const _=g/t.length*Math.PI*2,S=8,M={initialPos:new Q(Math.sin(_)*S,(Math.random()-.5)*8,Math.cos(_)*S),rotation:new Aa(0,_+Math.PI,0)};return l.current.set(m,M),{url:m,...M}}),[t]);return vl((m,g)=>{if(!s.current)return;const action=routeChristmasPinch(photoRoute,r,()=>{
       i.updateMatrixWorld();
       s.current.updateWorldMatrix(true,true);
       const frames=s.current.children.filter(item=>item.name==="photo_container");
       if(r.input!=="hand") return findChristmasPointerFrame(r,i,frames);
-      const view={mode,width:m.size.width,height:m.size.height,zoom:i.zoom,
-        position:i.position.clone(),rotation:i.quaternion.clone(),yaw:orbit.current.viewYaw};
-      return findChristmasPhotoInView(cycle.current,s.current,frames,f,i,view);
+      return findNextChristmasPhoto(cycle.current,s.current,frames,f,i,m.size);
     });
     s.current.children.forEach((E,R)=>{if(E.name!=="photo_container")return;const A=f[R];if(!A)return;const T=E===action?.frame,step=1-Math.exp(-g*5);let N=A.initialPos.clone(),I=A.rotation.clone(),D=1;if(T&&s.current){const z=new Q(0,0,-5);z.applyQuaternion(i.quaternion);const F=i.position.clone().add(z).project(i);F.set(0,0,F.z).unproject(i);N=s.current.worldToLocal(F.clone());const P=new Bn,O=s.current.localToWorld(N.clone());P.position.copy(O),P.lookAt(i.position);const X=new Ta;s.current.getWorldQuaternion(X);const te=X.clone().invert().multiply(P.quaternion);I=new Aa().setFromQuaternion(te),D=2.5}else N.y+=Math.sin(m.clock.elapsedTime+R)*.01;E.position.lerp(N,step),Math.abs(E.rotation.y-I.y)>Math.PI&&(I.y>E.rotation.y?E.rotation.y+=Math.PI*2:E.rotation.y-=Math.PI*2),E.rotation.x=K0.lerp(E.rotation.x,I.x,step),E.rotation.y=K0.lerp(E.rotation.y,I.y,step),E.rotation.z=K0.lerp(E.rotation.z,I.z,step);const B=E.scale.x,L=K0.lerp(B,D,step);E.scale.set(L,L,L)})},-.5),re.jsx("group",{ref:s,children:f.map((m,g)=>re.jsxs("group",{name:"photo_container",position:m.initialPos,rotation:m.rotation,userData:{index:g},children:[re.jsx(AL,{url:m.url,transparent:!0,opacity:.9,side:ua}),re.jsxs("group",{children:[re.jsxs("mesh",{position:[0,.55,0],children:[re.jsx("boxGeometry",{args:[1.2,.1,.05]}),re.jsx("meshStandardMaterial",{color:"#FFD700",metalness:1,roughness:.2,envMapIntensity:2})]}),re.jsxs("mesh",{position:[0,-.55,0],children:[re.jsx("boxGeometry",{args:[1.2,.1,.05]}),re.jsx("meshStandardMaterial",{color:"#FFD700",metalness:1,roughness:.2,envMapIntensity:2})]}),re.jsxs("mesh",{position:[-.55,0,0],children:[re.jsx("boxGeometry",{args:[.1,1,.05]}),re.jsx("meshStandardMaterial",{color:"#FFD700",metalness:1,roughness:.2,envMapIntensity:2})]}),re.jsxs("mesh",{position:[.55,0,0],children:[re.jsx("boxGeometry",{args:[.1,1,.05]}),re.jsx("meshStandardMaterial",{color:"#FFD700",metalness:1,roughness:.2,envMapIntensity:2})]})]})]},m.url))})},v5Details=(function treeDetailComponents(T, React, jsx, useFrame, mode, gestures, treeHeight, treeRadius) {
   const TAU = Math.PI * 2;
@@ -5825,7 +5813,7 @@ return orthographicDepthToViewZ(depth,cameraNear,cameraFar);
     return new mD.CanvasTexture(canvas);
   },[]);
   pe.useEffect(()=>()=>snowMap.dispose(),[snowMap]);
-  const t=26,i=16,s=-8.5,{positions:l,flakes:f}=pe.useMemo(()=>{const h=new Float32Array(r*3),m=[];for(let g=0;g<r;g++){const v=Math.sqrt(Math.random())*t,_=Math.random()*Math.PI*2;h[g*3]=Math.cos(_)*v,h[g*3+1]=s+Math.random()*(i-s),h[g*3+2]=Math.sin(_)*v,m.push({speed:.6+Math.random()*1.2,driftPhase:Math.random()*Math.PI*2,driftAmp:.15+Math.random()*.5})}return{positions:h,flakes:m}},[r]);return vl((h,m)=>{if(!e.current)return;const g=e.current.geometry.attributes.position,v=g.array,_=h.clock.getElapsedTime();for(let S=0;S<r;S++){const M=S*3;if(v[M+1]-=f[S].speed*m,v[M]+=Math.sin(_*.8+f[S].driftPhase)*f[S].driftAmp*m,v[M+2]+=Math.cos(_*.6+f[S].driftPhase)*f[S].driftAmp*m,v[M+1]<s){const E=Math.sqrt(Math.random())*t,R=Math.random()*Math.PI*2;v[M]=Math.cos(R)*E,v[M+1]=i,v[M+2]=Math.sin(R)*E}}g.needsUpdate=!0}),re.jsxs("points",{ref:e,children:[re.jsx("bufferGeometry",{children:re.jsx("bufferAttribute",{attach:"attributes-position",args:[l,3]})}),re.jsx("pointsMaterial",{size:.14,color:"#ffffff",map:snowMap,alphaTest:.015,transparent:!0,opacity:.85,sizeAttenuation:!0,depthWrite:!1,blending:ip})]})},KP=v5Details.Foundation,JP=v5Details.Garland,$P=({mode:r,audioData:e,handData:t,photoRoute,config:s,images:l})=>{const f=pe.useRef(null),orbit=pe.useRef({anchor:null,manual:false,viewYaw:0});useChristmasHandOrbit(f,t,r,orbit);return re.jsxs("group",{ref:f,children:[re.jsx(jP,{mode:r,audioData:e,handData:t,count:s.particleCount,color1:s.particleColor1,color2:s.particleColor2}),re.jsx(ZP,{mode:r,audioData:e,handData:t,boxCount:s.boxCount,bellCount:s.bellCount,boxColor1:s.boxColor1,boxColor2:s.boxColor2,bellColor:s.bellColor}),re.jsx(JP,{audioData:e}),re.jsx(YP,{handData:t,photoRoute,images:l,mode:r,orbit})]})};
+  const t=26,i=16,s=-8.5,{positions:l,flakes:f}=pe.useMemo(()=>{const h=new Float32Array(r*3),m=[];for(let g=0;g<r;g++){const v=Math.sqrt(Math.random())*t,_=Math.random()*Math.PI*2;h[g*3]=Math.cos(_)*v,h[g*3+1]=s+Math.random()*(i-s),h[g*3+2]=Math.sin(_)*v,m.push({speed:.6+Math.random()*1.2,driftPhase:Math.random()*Math.PI*2,driftAmp:.15+Math.random()*.5})}return{positions:h,flakes:m}},[r]);return vl((h,m)=>{if(!e.current)return;const g=e.current.geometry.attributes.position,v=g.array,_=h.clock.getElapsedTime();for(let S=0;S<r;S++){const M=S*3;if(v[M+1]-=f[S].speed*m,v[M]+=Math.sin(_*.8+f[S].driftPhase)*f[S].driftAmp*m,v[M+2]+=Math.cos(_*.6+f[S].driftPhase)*f[S].driftAmp*m,v[M+1]<s){const E=Math.sqrt(Math.random())*t,R=Math.random()*Math.PI*2;v[M]=Math.cos(R)*E,v[M+1]=i,v[M+2]=Math.sin(R)*E}}g.needsUpdate=!0}),re.jsxs("points",{ref:e,children:[re.jsx("bufferGeometry",{children:re.jsx("bufferAttribute",{attach:"attributes-position",args:[l,3]})}),re.jsx("pointsMaterial",{size:.14,color:"#ffffff",map:snowMap,alphaTest:.015,transparent:!0,opacity:.85,sizeAttenuation:!0,depthWrite:!1,blending:ip})]})},KP=v5Details.Foundation,JP=v5Details.Garland,$P=({mode:r,audioData:e,handData:t,photoRoute,config:s,images:l})=>{const f=pe.useRef(null);useChristmasHandOrbit(f,t,r);return re.jsxs("group",{ref:f,children:[re.jsx(jP,{mode:r,audioData:e,handData:t,count:s.particleCount,color1:s.particleColor1,color2:s.particleColor2}),re.jsx(ZP,{mode:r,audioData:e,handData:t,boxCount:s.boxCount,bellCount:s.bellCount,boxColor1:s.boxColor1,boxColor2:s.boxColor2,bellColor:s.bellColor}),re.jsx(JP,{audioData:e}),re.jsx(YP,{handData:t,photoRoute,images:l})]})};
 function ChristmasViewportFraming(){
   const camera=Wr(state=>state.camera);
   const size=Wr(state=>state.size);
@@ -5986,7 +5974,7 @@ const ez=({mode:r,audioData:e,handData:t,config:i,images:s})=>{const photoRoute=
                 transition-all duration-200
             `,children:[re.jsx("div",{className:`absolute inset-0 border-2 rounded-full opacity-70
                     ${mouseBloom?"scale-110":""}
-                `,style:{borderColor:mouseBloom?"#ff5964":z}}),re.jsx("div",{className:"w-1 h-1 bg-white rounded-full"}),mouseBloom&&re.jsx("div",{className:"absolute -top-6 text-[10px] font-bold tracking-widest animate-pulse",style:{color:"#ff5964"},children:"绽放"})]})}),re.jsx("div",{className:"christmas-input-hint flex items-end justify-center pointer-events-none w-full",children:re.jsx("div",{className:"px-5 py-2 rounded-full backdrop-blur-md text-[11px] tracking-[0.25em] border",style:{background:"rgba(10,14,30,0.5)",borderColor:"rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.45)"},children:M?"张掌漂浮，左右转动 · 握拳收拢，移动可旋转 · 捏合轮换相框":"拖动旋转 · 滚轮缩放 · 按住鼠标让星光绽放"})})]})};
+                `,style:{borderColor:mouseBloom?"#ff5964":z}}),re.jsx("div",{className:"w-1 h-1 bg-white rounded-full"}),mouseBloom&&re.jsx("div",{className:"absolute -top-6 text-[10px] font-bold tracking-widest animate-pulse",style:{color:"#ff5964"},children:"绽放"})]})}),re.jsx("div",{className:"christmas-input-hint flex items-end justify-center pointer-events-none w-full",children:re.jsx("div",{className:"px-5 py-2 rounded-full backdrop-blur-md text-[11px] tracking-[0.25em] border",style:{background:"rgba(10,14,30,0.5)",borderColor:"rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.45)"},children:M?"张掌漂浮，左右转动 · 握拳收拢，移动可旋转 · 捏合轮看相册":"拖动旋转 · 滚轮缩放 · 按住鼠标让星光绽放"})})]})};
 const christmasMobile = matchMedia("(max-width: 767px), (max-width: 960px) and (pointer: coarse)").matches;
 const christmasReduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
 const christmasHandScripts = [
